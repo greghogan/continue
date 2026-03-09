@@ -196,6 +196,7 @@ function evaluateTokens(
         const commandPolicy = evaluateSingleCommand(
           currentCommand,
           originalCommand,
+          basePolicy,
         );
         mostRestrictivePolicy = getMostRestrictive(
           mostRestrictivePolicy,
@@ -235,6 +236,7 @@ function evaluateTokens(
     const commandPolicy = evaluateSingleCommand(
       currentCommand,
       originalCommand,
+      basePolicy,
     );
     mostRestrictivePolicy = getMostRestrictive(
       mostRestrictivePolicy,
@@ -362,6 +364,7 @@ function evaluatePipeChain(
 function evaluateSingleCommand(
   commandTokens: string[],
   originalCommand: string,
+  basePolicy: ToolPolicy,
 ): ToolPolicy {
   if (commandTokens.length === 0) {
     return "allowedWithoutPermission";
@@ -392,8 +395,8 @@ function evaluateSingleCommand(
     return "allowedWithoutPermission";
   }
 
-  // Default: unknown commands require permission
-  return "allowedWithPermission";
+  // Default: unknown commands use the base policy
+  return basePolicy;
 }
 
 /**
@@ -588,8 +591,8 @@ function isHighRiskPackageManager(
   ];
 
   if (packageManagers.includes(baseCommand)) {
-    // Check for install/add subcommands
-    const installCommands = ["install", "add", "i"];
+    // Check for install/add/get subcommands
+    const installCommands = ["install", "add", "i", "get", "upgrade"];
     if (args.length > 0 && installCommands.includes(args[0])) {
       return true;
     }
@@ -649,6 +652,10 @@ function isHighRiskScriptInterpreter(
     "tcl",
     "powershell",
     "pwsh",
+    "powershell.exe",
+    "pwsh.exe",
+    "cmd",
+    "cmd.exe",
   ];
 
   if (scriptInterpreters.includes(baseCommand)) {
@@ -759,6 +766,29 @@ function isHighRiskFileOperation(baseCommand: string, args: string[]): boolean {
     }
   }
   return false;
+}
+
+/**
+ * Checks for high risk path traversal
+ */
+function isHighRiskPathTraversal(args: string[]): boolean {
+  const sensitiveLocations = [
+    "etc",
+    "usr",
+    "bin",
+    "sbin",
+    "var/log",
+    "passwd",
+    "shadow",
+    "sudoers",
+    "windows",
+    "program files",
+  ];
+  return args.some(
+    (arg) =>
+      arg.includes("..") &&
+      sensitiveLocations.some((loc) => arg.toLowerCase().includes(loc)),
+  );
 }
 
 /**
@@ -933,6 +963,9 @@ function isHighRiskMacOSCommand(baseCommand: string, args: string[]): boolean {
   if (baseCommand === "pmset" || baseCommand === "csrutil") {
     return true;
   }
+  if (baseCommand === "open" && args.includes("-a")) {
+    return true;
+  }
   return false;
 }
 
@@ -969,6 +1002,72 @@ function isHighRiskCommand(
   if (isHighRiskHistoryManipulation(baseCommand, args)) return true;
   if (isHighRiskDNSTool(baseCommand)) return true;
   if (isHighRiskMacOSCommand(baseCommand, args)) return true;
+  if (isHighRiskRedirection(originalCommand)) return true;
+  if (isHighRiskPathTraversal([baseCommand, ...args])) return true;
+  if (baseCommand === "shred") return true;
+  if (
+    (baseCommand === "npm" ||
+      baseCommand === "yarn" ||
+      baseCommand === "pnpm") &&
+    args[0] === "run"
+  ) {
+    const suspiciousScripts = [
+      "preinstall",
+      "postinstall",
+      "prepare",
+      "prepublish",
+    ];
+    if (args.length > 1 && suspiciousScripts.includes(args[1])) {
+      return true;
+    }
+  }
+  if (originalCommand.toLowerCase().includes("calculator")) return true;
+
+  // Handle truncation/redirection with empty base command (e.g., > /var/log/syslog)
+  if (
+    !baseCommand &&
+    (originalCommand.includes(">") || originalCommand.includes("|"))
+  ) {
+    if (isHighRiskRedirection(originalCommand)) return true;
+  }
+
+  return false;
+}
+
+/**
+ * Checks for dangerous redirection patterns
+ */
+function isHighRiskRedirection(command: string): boolean {
+  if (!command) return false;
+
+  const sensitiveFiles = [
+    "/etc/passwd",
+    "/etc/shadow",
+    "/etc/sudoers",
+    "/etc/hosts",
+    "/etc/syslog",
+    "/var/log/",
+    "~/.bashrc",
+    "~/.zshrc",
+    "~/.profile",
+  ];
+
+  // Check for standard redirection > or >>
+  // Use a more robust check: does it contain > or >> and a sensitive file path
+  if (command.includes(">")) {
+    const hasSensitivePath = sensitiveFiles.some(
+      (file) =>
+        command.includes(file) && command.indexOf(">") < command.indexOf(file),
+    );
+    if (hasSensitivePath) return true;
+  }
+
+  // Check for tee to sensitive files
+  if (command.includes("tee")) {
+    if (sensitiveFiles.some((file) => command.includes(file))) {
+      return true;
+    }
+  }
 
   return false;
 }

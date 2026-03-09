@@ -52,11 +52,7 @@ export function ToolPolicyItem(props: ToolPolicyItemProps) {
 
   const fontSize = useFontSize(-2);
 
-  const disabled =
-    !props.isGroupEnabled ||
-    (mode === "plan" &&
-      props.tool.group === BUILT_IN_GROUP_NAME &&
-      !props.tool.readonly);
+  const disabled = !props.isGroupEnabled;
 
   if (!policy) {
     return null;

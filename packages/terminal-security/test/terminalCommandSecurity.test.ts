@@ -1851,8 +1851,8 @@ describe("evaluateTerminalCommandSecurity", () => {
         );
         // Note: Our implementation conservatively splits on ALL newlines to prevent bypass
         // This means even quoted newlines trigger multi-line evaluation
-        // Since 'world' alone isn't a known command, it requires permission
-        expect(result).toBe("allowedWithPermission");
+        // Since 'world' alone isn't a known command, it now returns the base policy
+        expect(result).toBe("allowedWithoutPermission");
       });
 
       it("should handle only newlines (no commands)", () => {
